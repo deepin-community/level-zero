@@ -16,8 +16,12 @@ namespace loader
     context_t *context;
 
     void context_t::debug_trace_message(std::string message, std::string result) {
-        std::string debugTracePrefix = "ZE_LOADER_DEBUG_TRACE:";
-        std::cerr << debugTracePrefix << message << result << std::endl;
+        if (zel_logger->log_to_console){
+            std::string debugTracePrefix = "ZE_LOADER_DEBUG_TRACE:";
+            std::cerr << debugTracePrefix << message << result << std::endl;
+        }
+
+        zel_logger->log_trace(message + result);
     };
 
     std::string to_string(const ze_result_t result) {
@@ -257,9 +261,33 @@ namespace loader
         auto discoveredDrivers = discoverEnabledDrivers();
         std::string loadLibraryErrorValue;
 
+
+        auto loader_file = getenv_string("ZEL_LOADER_LOG_FILE");
+        if (loader_file.empty()){
+            loader_file = LOADER_LOG_FILE_DEFAULT;
+        }
+
+        auto logging_enabled = getenv_tobool( "ZEL_ENABLE_LOADER_LOGGING" );
+
+        auto log_level = getenv_string("ZEL_LOADER_LOGGING_LEVEL");
+        zel_logger =  std::make_shared<Logger>("ze_loader", loader_file, !log_level.empty() ? log_level : "warn", logging_enabled);
+        if ((log_level == "trace") && !debugTraceEnabled) {
+            debugTraceEnabled = true;
+            zel_logger->log_to_console = false;
+        }
+
+        if (!logging_enabled){
+            zel_logger->set_level(spdlog::level::off);
+        }
+
+        if (zel_logger->logging_enabled)
+            zel_logger->get_base_logger()->info("Loader Version {}.{}.{} {}", LOADER_VERSION_MAJOR, LOADER_VERSION_MINOR, LOADER_VERSION_PATCH, LOADER_VERSION_SHA);
+
+
         drivers.reserve( discoveredDrivers.size() + getenv_tobool( "ZE_ENABLE_NULL_DRIVER" ) );
         if( getenv_tobool( "ZE_ENABLE_NULL_DRIVER" ) )
         {
+            zel_logger->log_info("Enabling Null Driver");
             auto handle = LOAD_DRIVER_LIBRARY( MAKE_LIBRARY_NAME( "ze_null", L0_LOADER_VERSION ) );
             if (debugTraceEnabled) {
                 std::string message = "ze_null Driver Init";
@@ -297,8 +325,10 @@ namespace loader
                 loadLibraryErrorValue.clear();
             }
         }
-        if(drivers.size()==0)
+        if(drivers.size()==0){
+            zel_logger->log_error("0 Drivers Discovered");
             return ZE_RESULT_ERROR_UNINITIALIZED;
+        }
 
         add_loader_version();
         std::string loaderLibraryPath;
@@ -308,6 +338,7 @@ namespace loader
         typedef ze_result_t (ZE_APICALL *getVersion_t)(zel_component_version_t *version);
         if( getenv_tobool( "ZE_ENABLE_VALIDATION_LAYER" ) )
         {
+            zel_logger->log_info("Validation Layer Enabled");
             std::string validationLayerLibraryPath = create_library_path(MAKE_LAYER_NAME( "ze_validation_layer" ), loaderLibraryPath.c_str());
             validationLayer = LOAD_DRIVER_LIBRARY( validationLayerLibraryPath.c_str() );
             if(validationLayer)
@@ -328,6 +359,7 @@ namespace loader
         }
 
         if (getenv_tobool( "ZE_ENABLE_TRACING_LAYER" )) {
+            zel_logger->log_info("Tracing Layer Enabled");
             tracingLayerEnabled = true;
         }
         std::string tracingLayerLibraryPath = create_library_path(MAKE_LAYER_NAME( "ze_tracing_layer" ), loaderLibraryPath.c_str());
@@ -349,16 +381,21 @@ namespace loader
         }
 
         if( getenv_tobool( "ZET_ENABLE_API_TRACING_EXP" ) ) {
-            std::cout << "ZET_ENABLE_API_TRACING_EXP is deprecated. Use ZE_ENABLE_TRACING_LAYER instead" << std::endl;
+            auto depr_msg = "ZET_ENABLE_API_TRACING_EXP is deprecated. Use ZE_ENABLE_TRACING_LAYER instead";
+            zel_logger->log_warning(depr_msg);
+            std::cout << depr_msg << std::endl;
         }
 
         forceIntercept = getenv_tobool( "ZE_ENABLE_LOADER_INTERCEPT" );
 
-        if(forceIntercept || drivers.size() > 1)
+        if(forceIntercept || drivers.size() > 1){
              intercept_enabled = true;
+             zel_logger->log_info("Intercept Enabled");
+        }
 
         driverEnvironmentQueried = true;
 
+        zel_logger->log_info("zeInit succeeded");
         return ZE_RESULT_SUCCESS;
     };
 
@@ -406,6 +443,7 @@ namespace loader
                 }
             }
         }
+
     };
 
     void context_t::add_loader_version(){

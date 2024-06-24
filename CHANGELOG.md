@@ -1,5 +1,23 @@
 # Level zero loader changelog
 
+## v1.17.6
+* Bundle spdlog headers as part of build vs library build
+## v1.17.2
+* Recognize mutable command list struct types in validation layer
+## v1.17.0
+* Update to support v1.9.3 of the L0 Spec
+## v1.16.15
+* Fix Tracing Layer Dynamic Enable Counter
+## v1.16.14
+* Fix loading environment strings
+* Avoid init of Logger unless Enabled by ZEL_ENABLE_LOADER_LOGGING
+## v1.16.11
+* fix Logging build to be static linked
+## v1.16.9
+* Fix code Gen scripts for zesInit Only
+* Fix Build using IntelLLVM compiler
+* Installation path fixes
+* Add USE_ASAN cmake flag for address sanitization
 ## v1.16.1
 * Fix to spec generated api version defines
 ## v1.16.0

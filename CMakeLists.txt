@@ -7,12 +7,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 if(MSVC AND (MSVC_VERSION LESS 1900))
-    message(FATAL_ERROR "Visual Studio Compiler Version >= 1900 Required to build.")
+message(FATAL_ERROR "Visual Studio Compiler Version >= 1900 Required to build.")
 endif()
 
 # This project follows semantic versioning (https://semver.org/). Only set the
 # major and minor version here - patch version is determined dynamically.
-project(level-zero VERSION 1.16)
+project(level-zero VERSION 1.17)
+
+include(GNUInstallDirs)
 
 # Patch version corresponds to # of commits on master since last version
 # major/minor tag (e.g., v1.0). If not building in a git repository, then get
@@ -55,6 +57,29 @@ elseif(Git_FOUND)
 	endif()
 endif()
 
+if(Git_FOUND)
+	if(MSVC)
+		execute_process(
+			COMMAND CMD /c ${GIT_EXECUTABLE} rev-parse HEAD
+			OUTPUT_VARIABLE VERSION_SHA
+			OUTPUT_STRIP_TRAILING_WHITESPACE
+			WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+		)
+	else()
+	execute_process(
+		COMMAND ${GIT_EXECUTABLE} rev-parse HEAD
+		OUTPUT_VARIABLE VERSION_SHA
+		OUTPUT_STRIP_TRAILING_WHITESPACE
+		WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+	)
+	endif()
+else()
+	set(VERSION_SHA " - No git SHA found, compiled outside git folder.")
+endif()
+add_definitions(-DLOADER_VERSION_SHA="${VERSION_SHA}")
+
+include_directories("${CMAKE_CURRENT_SOURCE_DIR}/third_party/spdlog_headers")
+
 # Update other relevant variables to include the patch
 set(PROJECT_VERSION "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}")
 set(CMAKE_PROJECT_VERSION_PATCH "${PROJECT_VERSION_PATCH}")
@@ -82,10 +107,10 @@ if(MSVC)
     set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} /DYNAMICBASE")
     set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} /guard:cf")
     # enable Spectre Mitigation, not supported by clang-cl
-    if(NOT CMAKE_CXX_COMPILER_ID STREQUAL Clang)
+    if((NOT CMAKE_CXX_COMPILER_ID STREQUAL Clang) AND (NOT CMAKE_CXX_COMPILER_ID STREQUAL IntelLLVM))
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /Qspectre")
     endif()
-    if(NOT CMAKE_C_COMPILER_ID STREQUAL Clang)
+    if((NOT CMAKE_C_COMPILER_ID STREQUAL Clang) AND NOT (CMAKE_C_COMPILER_ID STREQUAL IntelLLVM))
         set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /Qspectre")
     endif()
 endif()
@@ -104,7 +129,9 @@ if(NOT MSVC)
     else()
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fpermissive")
     endif()
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Werror -Wnon-virtual-dtor")
+    if(NOT CMAKE_CXX_COMPILER_ID STREQUAL IntelLLVM)
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Werror -Wnon-virtual-dtor")
+    endif()
 endif()
 
 #MSVC compile flags
@@ -112,11 +139,13 @@ if(MSVC)
     string(REPLACE "/MDd" "/MTd" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
     string(REPLACE "/MD" "/MT" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
 
-    # treat warnings as errors
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /WX /W3")
+    if(NOT CMAKE_CXX_COMPILER_ID STREQUAL IntelLLVM)
+        # treat warnings as errors
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /WX /W3")
+    endif()
 
     # enable multi-process compilation, not supported by clang-cl
-    if(NOT CMAKE_CXX_COMPILER_ID STREQUAL Clang)
+    if((NOT CMAKE_CXX_COMPILER_ID STREQUAL Clang) AND (NOT CMAKE_CXX_COMPILER_ID STREQUAL IntelLLVM))
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP")
     endif()
 
@@ -143,8 +172,21 @@ if(MSVC)
 
 endif()
 
+if(USE_ASAN)
+    if(NOT MSVC)
+        # -fno-omit-frame-pointer is included for nicer stack traces in error messages
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address -fno-omit-frame-pointer")
+        set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address")
+        set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=address")
+    else()
+        message(WARNING "Address Sanitizer is not supported on Windows")
+    endif()
+endif()
+
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/source/wrapper/include)
+
 
 include_directories("${CMAKE_CURRENT_SOURCE_DIR}")
 
@@ -168,21 +210,21 @@ string(SUBSTRING "${os_name}" 0 1 os_name)
 file(GLOB LEVEL_ZERO_API_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/include/*.h")
 
 install(FILES ${LEVEL_ZERO_API_HEADERS}
-    DESTINATION ${CMAKE_INSTALL_PREFIX}/include/level_zero/
+    DESTINATION ./include/level_zero
     COMPONENT level-zero-devel
 )
 
 file(GLOB LEVEL_ZERO_LAYERS_API_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/include/layers/*.h")
 
 install(FILES ${LEVEL_ZERO_LAYERS_API_HEADERS}
-    DESTINATION ${CMAKE_INSTALL_PREFIX}/include/level_zero/layers
+    DESTINATION ./include/level_zero/layers
     COMPONENT level-zero-devel
 )
 
 file(GLOB LEVEL_ZERO_LOADER_API_HEADERS "${CMAKE_CURRENT_SOURCE_DIR}/include/loader/*.h")
 
 install(FILES ${LEVEL_ZERO_LOADER_API_HEADERS}
-    DESTINATION ${CMAKE_INSTALL_PREFIX}/include/level_zero/loader
+    DESTINATION ./include/level_zero/loader
     COMPONENT level-zero-devel
 )
 
@@ -202,7 +244,6 @@ endif()
 if(MSVC)
 	set(CPACK_SET_DESTDIR FALSE)
 	set(CPACK_PACKAGING_INSTALL_PREFIX "")
-	install(DIRECTORY "${CMAKE_INSTALL_PREFIX}/include/" DESTINATION "include")
 else()
 	set(CPACK_SET_DESTDIR TRUE)
 endif()
